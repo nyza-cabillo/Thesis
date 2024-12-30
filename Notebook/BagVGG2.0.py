@@ -2,6 +2,7 @@ import os
 import numpy as np
 import seaborn as sns
 import matplotlib.pyplot as plt
+from collections import Counter
 from sklearn.metrics import (
     precision_score,
     recall_score,
@@ -15,6 +16,7 @@ from tensorflow.keras.applications import VGG16, VGG19
 from tensorflow.keras.models import Model
 from tensorflow.keras.layers import Dense, Flatten
 from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 
 # Step 1: Dataset Preparation
@@ -31,6 +33,7 @@ train_data = datagen.flow_from_directory(
     batch_size=32,
     class_mode="categorical",
     subset="training",
+    shuffle=True,
 )
 val_data = datagen.flow_from_directory(
     dataset_dir,
@@ -38,6 +41,7 @@ val_data = datagen.flow_from_directory(
     batch_size=32,
     class_mode="categorical",
     subset="validation",
+    shuffle=True,
 )
 test_datagen = ImageDataGenerator(rescale=1.0 / 255)
 test_data = test_datagen.flow_from_directory(
@@ -45,10 +49,19 @@ test_data = test_datagen.flow_from_directory(
     target_size=(224, 224),
     batch_size=32,
     class_mode="categorical",
-    shuffle=False,  # Ensure order for evaluation
+    shuffle=False,
 )
 
 print(train_data.class_indices)  # Label Mapping
+
+# Compute class weights
+class_distribution = Counter(train_data.classes)
+total_samples = sum(class_distribution.values())
+class_weights = {
+    class_index: total_samples / (len(class_distribution) * count)
+    for class_index, count in class_distribution.items()
+}
+print("Class Weights:", class_weights)
 
 
 # Step 2: Pre-trained Models for Transfer Learning
@@ -81,35 +94,31 @@ for layer in vgg19_base.layers:
 model1.compile(optimizer=Adam(), loss="categorical_crossentropy", metrics=["accuracy"])
 model2.compile(optimizer=Adam(), loss="categorical_crossentropy", metrics=["accuracy"])
 
-history1 = model1.fit(train_data, validation_data=val_data, epochs=5, verbose=1)
-history2 = model2.fit(train_data, validation_data=val_data, epochs=5, verbose=1)
+# Set callbacks
+early_stop = EarlyStopping(monitor="val_loss", patience=3, restore_best_weights=True)
+checkpoint1 = ModelCheckpoint(
+    "vgg16_best_model.keras", save_best_only=True, monitor="val_loss"
+)
+checkpoint2 = ModelCheckpoint(
+    "vgg19_best_model.keras", save_best_only=True, monitor="val_loss"
+)
 
+# Train models
+history1 = model1.fit(
+    train_data,
+    validation_data=val_data,
+    epochs=10,
+    callbacks=[early_stop, checkpoint1],
+    class_weight=class_weights,
+)
+history2 = model2.fit(
+    train_data,
+    validation_data=val_data,
+    epochs=10,
+    callbacks=[early_stop, checkpoint2],
+    class_weight=class_weights,
+)
 
-# Training History sa Model
-def plot_training_history(history, model_name):
-    plt.figure(figsize=(12, 5))
-    plt.subplot(1, 2, 1)
-    plt.plot(history.history["accuracy"], label="Train Accuracy")
-    plt.plot(history.history["val_accuracy"], label="Validation Accuracy")
-    plt.title(f"{model_name} Accuracy")
-    plt.xlabel("Epochs")
-    plt.ylabel("Accuracy")
-    plt.legend()
-
-    plt.subplot(1, 2, 2)
-    plt.plot(history.history["loss"], label="Train Loss")
-    plt.plot(history.history["val_loss"], label="Validation Loss")
-    plt.title(f"{model_name} Loss")
-    plt.xlabel("Epochs")
-    plt.ylabel("Loss")
-    plt.legend()
-
-    plt.show()
-
-
-# Training history
-plot_training_history(history1, "VGG16")
-plot_training_history(history2, "VGG19")
 
 # Step 5: Evaluate Individual Models
 test_images, test_labels = next(test_data)
@@ -195,3 +204,60 @@ plot_confusion_matrix(
 plot_metrics(true_labels, pred1_classes, "VGG16", class_names)
 plot_metrics(true_labels, pred2_classes, "VGG19", class_names)
 plot_metrics(true_labels, final_predictions, "Ensemble (Majority Voting)", class_names)
+
+
+datagen = ImageDataGenerator(
+    rescale=1.0 / 255,
+    validation_split=0.2,  # Split 20% for validation
+)
+
+# Training generator
+train_data = datagen.flow_from_directory(
+    dataset_dir,
+    target_size=(224, 224),
+    batch_size=32,
+    class_mode="categorical",
+    subset="training",
+    shuffle=True,
+)
+
+
+# Define Function to Show Examples
+
+import random
+import matplotlib.image as mpimg
+
+
+def show_class_examples(dataset_dir, classes, num_examples=3):
+    """
+    Display example images from each class.
+
+    Parameters:
+    - dataset_dir: str, the directory containing the dataset with class subfolders.
+    - classes: list, the names of the classes.
+    - num_examples: int, the number of examples to display per class.
+    """
+    plt.figure(figsize=(15, len(classes) * 5))
+
+    for class_idx, class_name in enumerate(classes):
+        class_dir = os.path.join(dataset_dir, class_name)
+        # Get all images in the class folder
+        images = os.listdir(class_dir)
+        # Select random images
+        selected_images = random.sample(images, min(len(images), num_examples))
+
+        for i, img_name in enumerate(selected_images):
+            img_path = os.path.join(class_dir, img_name)
+            img = mpimg.imread(img_path)
+            plt.subplot(len(classes), num_examples, class_idx * num_examples + i + 1)
+            plt.imshow(img)
+            plt.axis("off")
+            plt.title(f"{class_name} (Example {i + 1})")
+
+    plt.tight_layout()
+    plt.show()
+
+
+# Call the function to display examples
+classes = ["black_pod_rot", "healthy", "pod_borer"]  # Update class names if needed
+show_class_examples(dataset_dir, classes)
