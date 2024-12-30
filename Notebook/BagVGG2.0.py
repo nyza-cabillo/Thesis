@@ -21,7 +21,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint
 
 # Step 1: Dataset Preparation
 # Define the directory
-dataset_dir = "C:/Users/Desktop/Desktop/Thesis/Data/CacaoDataset"
+dataset_dir = r"C:\Users\Desktop\Desktop\Thesis\Data\CacaoDataset"
 
 # Set up data generators
 datagen = ImageDataGenerator(
