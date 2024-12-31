@@ -224,3 +224,5 @@ plot_confusion_matrix(
 plot_metrics(test_labels, pred1_classes, "VGG16", class_names)
 plot_metrics(test_labels, pred2_classes, "VGG19", class_names)
 plot_metrics(test_labels, final_predictions, "Ensemble (Majority Voting)", class_names)
+
+# take not about evaluating individual models and Classification Report in Metrics
