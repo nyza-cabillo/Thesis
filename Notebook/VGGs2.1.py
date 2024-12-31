@@ -17,30 +17,55 @@ from tensorflow.keras.layers import Dense, Flatten
 from tensorflow.keras.optimizers import Adam
 
 # Step 1: Dataset Preparation
-# Define directories
-data_dir = "C:/Users/Desktop/Desktop/Thesis/Data/Dataset"
-train_dir = os.path.join(data_dir, "train")
-val_dir = os.path.join(data_dir, "val")
-test_dir = os.path.join(data_dir, "test")
+# Define base directories for each category
+base_data_dir = "C:/Users/Desktop/Desktop/Thesis/Data/Dataset"
+train_dirs = {
+    "healthy": os.path.join(base_data_dir, "train", "healthy"),
+    "black_pod_rot": os.path.join(base_data_dir, "train", "black_pod_rot"),
+    "pod_borer": os.path.join(base_data_dir, "train", "pod_borer"),
+}
+val_dirs = {
+    "healthy": os.path.join(base_data_dir, "val", "healthy"),
+    "black_pod_rot": os.path.join(base_data_dir, "val", "black_pod_rot"),
+    "pod_borer": os.path.join(base_data_dir, "val", "pod_borer"),
+}
+test_dirs = {
+    "healthy": os.path.join(base_data_dir, "test", "healthy"),
+    "black_pod_rot": os.path.join(base_data_dir, "test", "black_pod_rot"),
+    "pod_borer": os.path.join(base_data_dir, "test", "pod_borer"),
+}
 
 # Set up data generators
 datagen = ImageDataGenerator(rescale=1.0 / 255)
 
-train_data = datagen.flow_from_directory(
-    train_dir, target_size=(224, 224), batch_size=32, class_mode="categorical"
-)
-val_data = datagen.flow_from_directory(
-    val_dir, target_size=(224, 224), batch_size=32, class_mode="categorical"
-)
-test_data = datagen.flow_from_directory(
-    test_dir,
-    target_size=(224, 224),
-    batch_size=32,
-    class_mode="categorical",
-    shuffle=False,
-)
 
-print(train_data.class_indices)  # Label Mapping
+def load_data_from_dirs(directories, target_size=(224, 224), batch_size=32):
+    datagen = ImageDataGenerator(rescale=1.0 / 255)
+    data = []
+    labels = []
+
+    class_map = {label: idx for idx, label in enumerate(directories.keys())}
+    for label, path in directories.items():
+        for fname in os.listdir(path):
+            fpath = os.path.join(path, fname)
+            if os.path.isfile(fpath):
+                img = plt.imread(fpath)
+                img_resized = np.resize(img, target_size + (3,)) / 255.0
+                data.append(img_resized)
+                labels.append(class_map[label])
+
+    data = np.array(data)
+    labels = np.array(labels)
+    return data, labels
+
+
+train_data, train_labels = load_data_from_dirs(train_dirs)
+val_data, val_labels = load_data_from_dirs(val_dirs)
+test_data, test_labels = load_data_from_dirs(test_dirs)
+
+print("Train shape:", train_data.shape)
+print("Validation shape:", val_data.shape)
+print("Test shape:", test_data.shape)
 
 
 # Step 2: Pre-trained Models for Transfer Learning
@@ -58,7 +83,7 @@ def build_model(base_model, num_classes):
 vgg16_base = VGG16(weights="imagenet", include_top=False, input_shape=(224, 224, 3))
 vgg19_base = VGG19(weights="imagenet", include_top=False, input_shape=(224, 224, 3))
 
-num_classes = len(train_data.class_indices)  # Number of classes
+num_classes = len(train_dirs)  # Number of classes
 model1 = build_model(vgg16_base, num_classes)
 model2 = build_model(vgg19_base, num_classes)
 
@@ -70,11 +95,27 @@ for layer in vgg19_base.layers:
 
 # Step 4: Train Multiple Models
 # Compile models
-model1.compile(optimizer=Adam(), loss="categorical_crossentropy", metrics=["accuracy"])
-model2.compile(optimizer=Adam(), loss="categorical_crossentropy", metrics=["accuracy"])
+model1.compile(
+    optimizer=Adam(), loss="sparse_categorical_crossentropy", metrics=["accuracy"]
+)
+model2.compile(
+    optimizer=Adam(), loss="sparse_categorical_crossentropy", metrics=["accuracy"]
+)
 
-history1 = model1.fit(train_data, validation_data=val_data, epochs=5, verbose=1)
-history2 = model2.fit(train_data, validation_data=val_data, epochs=5, verbose=1)
+history1 = model1.fit(
+    train_data,
+    train_labels,
+    validation_data=(val_data, val_labels),
+    epochs=5,
+    verbose=1,
+)
+history2 = model2.fit(
+    train_data,
+    train_labels,
+    validation_data=(val_data, val_labels),
+    epochs=5,
+    verbose=1,
+)
 
 
 # Training History Visualization
@@ -103,13 +144,10 @@ plot_training_history(history1, "VGG16")
 plot_training_history(history2, "VGG19")
 
 # Step 5: Evaluate Individual Models
-test_images, test_labels = next(test_data)
-true_labels = np.argmax(test_labels, axis=1)
-
-pred1 = model1.predict(test_images)
+pred1 = model1.predict(test_data)
 pred1_classes = np.argmax(pred1, axis=1)
 
-pred2 = model2.predict(test_images)
+pred2 = model2.predict(test_data)
 pred2_classes = np.argmax(pred2, axis=1)
 
 
@@ -122,16 +160,16 @@ def evaluate_model(true_labels, predicted_labels, model_name):
     print(f"Confusion Matrix:\n{confusion_matrix(true_labels, predicted_labels)}")
 
 
-evaluate_model(true_labels, pred1_classes, "VGG16")
-evaluate_model(true_labels, pred2_classes, "VGG19")
+evaluate_model(test_labels, pred1_classes, "VGG16")
+evaluate_model(test_labels, pred2_classes, "VGG19")
 
 # Step 6: Ensemble Learning and Metrics
 final_predictions = []
-for i in range(len(test_images)):
+for i in range(len(test_data)):
     votes = [pred1_classes[i], pred2_classes[i]]
     final_predictions.append(np.bincount(votes).argmax())
 
-evaluate_model(true_labels, final_predictions, "Ensemble (Majority Voting)")
+evaluate_model(test_labels, final_predictions, "Ensemble (Majority Voting)")
 
 
 # Step 7: Visualization Functions
@@ -173,16 +211,16 @@ def plot_metrics(true_labels, pred_labels, model_name, class_names):
 
 
 # Step 8: Visualization for Models and Ensemble
-class_names = list(train_data.class_indices.keys())
+class_names = list(train_dirs.keys())
 
 # Confusion matrix
-plot_confusion_matrix(true_labels, pred1_classes, "VGG16", class_names)
-plot_confusion_matrix(true_labels, pred2_classes, "VGG19", class_names)
+plot_confusion_matrix(test_labels, pred1_classes, "VGG16", class_names)
+plot_confusion_matrix(test_labels, pred2_classes, "VGG19", class_names)
 plot_confusion_matrix(
-    true_labels, final_predictions, "Ensemble (Majority Voting)", class_names
+    test_labels, final_predictions, "Ensemble (Majority Voting)", class_names
 )
 
 # Metrics
-plot_metrics(true_labels, pred1_classes, "VGG16", class_names)
-plot_metrics(true_labels, pred2_classes, "VGG19", class_names)
-plot_metrics(true_labels, final_predictions, "Ensemble (Majority Voting)", class_names)
+plot_metrics(test_labels, pred1_classes, "VGG16", class_names)
+plot_metrics(test_labels, pred2_classes, "VGG19", class_names)
+plot_metrics(test_labels, final_predictions, "Ensemble (Majority Voting)", class_names)
